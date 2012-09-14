@@ -3,7 +3,7 @@ import boto
 
 from catsnap.config import MetaConfig
 from catsnap.singleton import Singleton
-from boto.exception import DynamoDBResponseError
+from boto.exception import DynamoDBResponseError, S3CreateError
 
 #This really oughtta be, like, the tablename or something, but I screwed up, so
 #now there're existing catsnap installs that use this schema. Sucks :(
@@ -18,6 +18,17 @@ class Client(Singleton):
     _s3_connection = None
 
     def setup(self):
+
+        bucket_name = MetaConfig().bucket
+        s3 = self.get_s3()
+        
+        try: 
+            s3.create_bucket(bucket_name)
+        except S3CreateError:
+            raise ValueError("It seems someone has already claimed your bucket name!"
+             " You'll have to pick a new one with `catsnap config bucket`." 
+             " Sorry about this; there's nothing I can do.")
+
         created_tables = 0
         try:
             self.create_table('tag')
@@ -36,14 +47,11 @@ class Client(Singleton):
 
     def bucket(self):
         if not self._bucket:
-            bucket_name = MetaConfig().bucket
             s3 = self.get_s3()
-            all_buckets = [x.name for x in s3.get_all_buckets()]
-            if bucket_name not in all_buckets:
-                self._bucket = s3.create_bucket(bucket_name)
-            else:
-                self._bucket = s3.get_bucket(bucket_name)
+            bucket_name = MetaConfig().bucket
+            self._bucket = s3.get_bucket(bucket_name)
         return self._bucket
+
 
     def create_table(self, table_name):
         table_prefix = MetaConfig().bucket

@@ -3,13 +3,18 @@ from __future__ import unicode_literals
 from tests import TestCase
 import boto
 from mock import patch, call, Mock
-from nose.tools import eq_
+from nose.tools import eq_, assert_raises
 
 from catsnap import Client
 
 class TestSetup(TestCase):
+    @patch('catsnap.MetaConfig')
     @patch('catsnap.Client.create_table')
-    def test_creates_tables(self, create_table):
+    @patch('catsnap.boto')
+    def test_creates_tables(self, mock_boto, create_table, MockMetaConfig):
+        config = Mock(bucket='oodles', aws_access_key_id='foo',
+                aws_secret_access_key='bar')
+        MockMetaConfig.return_value = config
         client = Client()
         tables_created = client.setup()
         create_table.assert_has_calls([
@@ -17,8 +22,13 @@ class TestSetup(TestCase):
             call('image')])
         eq_(tables_created, 2)
 
+    @patch('catsnap.MetaConfig')
     @patch('catsnap.Client.create_table')
-    def test_returns_number_of_new_tables(self, create_table):
+    @patch('catsnap.boto')
+    def test_returns_number_of_new_tables(self, mock_boto, create_table, MockMetaConfig):
+        config = Mock(bucket='oodles', aws_access_key_id='foo',
+                aws_secret_access_key='bar')
+        MockMetaConfig.return_value = config
         error = boto.exception.DynamoDBResponseError(400, 'table exists')
         error.error_code = 'ResourceInUseException'
         def do_create_table(table_name):
@@ -33,39 +43,57 @@ class TestSetup(TestCase):
 
         eq_(tables_created, 1)
 
-class TestGetBucket(TestCase):
     @patch('catsnap.MetaConfig')
     @patch('catsnap.boto')
-    def test_does_not_re_create_buckets(self, mock_boto, MockMetaConfig):
+    def test_creates_bucket(self, mock_boto, MockMetaConfig):
         config = Mock(bucket='oodles', aws_access_key_id='foo',
                 aws_secret_access_key='bar')
         MockMetaConfig.return_value = config
-        mock_bucket = Mock()
-        mock_bucket.name = 'oodles'
         s3 = Mock()
-        s3.get_all_buckets.return_value = [ mock_bucket ]
-        s3.get_bucket.return_value = mock_bucket
+        s3.get_all_buckets.return_value = []
         mock_boto.connect_s3.return_value = s3
+        client = Client()
+        client.setup()
 
-        bucket = Client().bucket()
-        eq_(s3.create_bucket.call_count, 0, "shouldn't've created a bucket")
-        eq_(bucket, mock_bucket)
+        s3.create_bucket.assert_called_once_with('oodles')
 
     @patch('catsnap.MetaConfig')
     @patch('catsnap.boto')
-    def test_creates_bucket_if_necessary(self, mock_boto, MockMetaConfig):
-        config = Mock(bucket='galvanized', aws_access_key_id='foo',
+    def test_failure_when_someone_else_has_that_bucket(self, mock_boto,
+                                                       MockMetaConfig):
+#        boto.exception.S3CreateError: S3CreateError: 409 Conflict
+#<?xml version="1.0" encoding="UTF-8"?>
+#<Error><Code>BucketAlreadyExists</Code><Message>The requested bucket name is not available. The bucket namespace is shared by all users of the system. Please select a different name and try again.</Message><BucketName>wp.patheos.com</BucketName><RequestId>3C6C1ED45C442F47</RequestId><HostId>J34v4gFkTThp5Gw1OpQzyWWnrc5hwfNL2DRUbk02Uqy3bd8euAYteVTJDIK2OLX1</HostId></Error>
+        config = Mock(bucket='oodles', aws_access_key_id='foo',
+                      aws_secret_access_key='bar')
+        error = boto.exception.S3CreateError(409, 'Bucket exists')
+        error.error_code = 'BucketAlreadyExists'
+        s3 = Mock()
+        s3.create_bucket.side_effect = error
+        mock_boto.connect_s3.return_value = s3
+
+        client = Client()
+
+        with assert_raises(ValueError) as raise_manager:
+            client.setup()
+        eq_(unicode(raise_manager.exception),
+                "It seems someone has already claimed your bucket name! "
+                "You'll have to pick a new one with `catsnap config bucket`. "
+                "Sorry about this; there's nothing I can do.")
+
+class TestGetBucket(TestCase):
+    @patch('catsnap.MetaConfig')
+    @patch('catsnap.boto')
+    def test_does_not_create_buckets(self, mock_boto, MockMetaConfig):
+        config = Mock(bucket='oodles', aws_access_key_id='foo',
                 aws_secret_access_key='bar')
         MockMetaConfig.return_value = config
         s3 = Mock()
-        mock_bucket = Mock()
-        s3.create_bucket.return_value = mock_bucket
         s3.get_all_buckets.return_value = []
         mock_boto.connect_s3.return_value = s3
 
         bucket = Client().bucket()
-        s3.create_bucket.assert_called_with('galvanized')
-        eq_(bucket, mock_bucket)
+        eq_(s3.create_bucket.call_count, 0, "shouldn't've created a bucket")
 
     @patch('catsnap.MetaConfig')
     @patch('catsnap.boto')
