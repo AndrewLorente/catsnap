@@ -8,6 +8,8 @@ import json
 def get_tag_items(tag_names):
     if not tag_names:
         raise StopIteration
+     
+    tag_names = list(set(tag_names))
 
     dynamo = Client().get_dynamodb()
     table = Client().table('tag')

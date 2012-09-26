@@ -5,7 +5,7 @@ from nose.tools import eq_
 from tests import TestCase
 
 from catsnap import HASH_KEY
-from catsnap.batch.tag_batch import get_tags, add_image_to_tags
+from catsnap.batch.tag_batch import get_tags, add_image_to_tags, get_tag_items
 
 class TestTagBatch(TestCase):
     @patch('catsnap.batch.tag_batch.Client')
@@ -145,3 +145,20 @@ class TestTagBatch(TestCase):
                 call(table, puts=[existing_tag_item, new_tag_item]),
                 call(table, puts=[new_tag_item])])
         eq_(write_list.submit.call_count, 2)
+
+    @patch('catsnap.batch.tag_batch.Client')
+    @patch('catsnap.batch.tag_batch.BatchList')
+    def test_get_tag_items__uniquifies_tags(self, BatchList, Client):
+        client = Mock()
+        client.get_dynamodb = MagicMock()
+        Client.return_value = client
+
+        batch_list = Mock()
+        BatchList.return_value = batch_list
+        table = client.table()
+
+        #since get_tag_items is a generator, we need to force evaluation
+        list(get_tag_items(['roadrunner', 'roadrunner']))
+        batch_list.add_batch.assert_called_once_with(
+                table, ['roadrunner'],
+                attributes_to_get=['filenames', HASH_KEY])
